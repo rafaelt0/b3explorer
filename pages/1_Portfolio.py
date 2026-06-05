@@ -351,7 +351,7 @@ st.markdown("""
 col_config1, col_config2 = st.columns(2)
 with col_config1:
     lookback_opcao = st.selectbox(
-        "Lookback da Otimização e Métricas",
+        "Lookback da Otimização",
         ("2 Anos (Padrão)", "1 Ano", "3 Anos", "5 Anos", "6 Meses", "Personalizado (Dias)")
     )
 with col_config2:
@@ -1000,3 +1000,4 @@ if st.button("Carregar Portfolio", type="primary", use_container_width=True):
                     
                     
                        
+
