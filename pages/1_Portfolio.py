@@ -440,9 +440,83 @@ if st.button("Carregar Portfolio", type="primary", use_container_width=True):
         peso_manual_df.index = peso_manual_df.index.str.replace(".SA","")
         st.dataframe((peso_manual_df*100).round(2).T)
         
+        # ── Sugestão de Compra de Cotas (Alocação Discreta) ───────────────────
+        st.subheader("Sugestão de Compra de Cotas")
+        st.markdown(f"Estimativa de cotas a comprar considerando o valor total de **R$ {valor_inicial:,.2f}**.")
         
+        cotas_list = []
+        total_efetivo = 0.0
         
+        for ticker, row in peso_manual_df.iterrows():
+            col_name = ticker + ".SA"
+            latest_price = 0.0
+            
+            # Busca o preço mais recente válido
+            if col_name in data_yf.columns:
+                valid_prices = data_yf[col_name].dropna()
+                latest_price = valid_prices.iloc[-1] if not valid_prices.empty else 0.0
+            elif ticker in data_yf.columns:
+                valid_prices = data_yf[ticker].dropna()
+                latest_price = valid_prices.iloc[-1] if not valid_prices.empty else 0.0
+            else:
+                for col in data_yf.columns:
+                    if ticker in col:
+                        valid_prices = data_yf[col].dropna()
+                        latest_price = valid_prices.iloc[-1] if not valid_prices.empty else 0.0
+                        break
+            
+            weight = row["Peso"]
+            valor_teorico = weight * valor_inicial
+            
+            if latest_price > 0:
+                cotas = int(np.floor(valor_teorico / latest_price))
+                valor_efetivo = cotas * latest_price
+            else:
+                cotas = 0
+                valor_efetivo = 0.0
+                
+            total_efetivo += valor_efetivo
+            
+            cotas_list.append({
+                "Ativo": ticker,
+                "Preço Unitário": latest_price,
+                "Peso Sugerido (%)": weight * 100,
+                "Valor Sugerido": valor_teorico,
+                "Cotas a Comprar": cotas,
+                "Valor Efetivo": valor_efetivo
+            })
+            
+        df_cotas = pd.DataFrame(cotas_list)
+        if total_efetivo > 0:
+            df_cotas["Peso Efetivo (%)"] = (df_cotas["Valor Efetivo"] / total_efetivo) * 100
+        else:
+            df_cotas["Peso Efetivo (%)"] = 0.0
+            
+        format_cotas = {
+            "Preço Unitário": "R$ {:,.2f}",
+            "Peso Sugerido (%)": "{:.2f}%",
+            "Valor Sugerido": "R$ {:,.2f}",
+            "Cotas a Comprar": "{:,}",
+            "Valor Efetivo": "R$ {:,.2f}",
+            "Peso Efetivo (%)": "{:.2f}%"
+        }
         
+        styled_cotas = (
+            df_cotas.style
+            .format(format_cotas)
+            .set_properties(**{"font-family": "JetBrains Mono, monospace", "font-size": "0.85rem"})
+        )
+        st.dataframe(styled_cotas, use_container_width=True, hide_index=True)
+        
+        # Resumo financeiro do rebalanceamento/compra
+        sobra_caixa = valor_inicial - total_efetivo
+        
+        col_c1, col_c2, col_c3 = st.columns(3)
+        col_c1.metric("Total Alocado Efetivo", f"R$ {total_efetivo:,.2f}")
+        col_c2.metric("Saldo Restante (Caixa)", f"R$ {sobra_caixa:,.2f}")
+        col_c3.metric("Eficiência da Alocação", f"{(total_efetivo/valor_inicial)*100:.2f}%")
+        
+        st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
         
         alloc_df = peso_manual_df.reset_index()
         alloc_df.columns = ["Ativo", "Peso"]
