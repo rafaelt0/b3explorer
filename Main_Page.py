@@ -17,6 +17,11 @@ from pypfopt import plotting
 import re
 import traceback
 import time
+import urllib.request
+import urllib.parse
+import xml.etree.ElementTree as ET
+import email.utils
+
 import plotly.graph_objects as go
 import plotly.express as px
 import scipy.stats as stats
@@ -166,6 +171,55 @@ def section_header(icon_svg, text, tag="h3"):
         f'<{tag} style="display:flex;align-items:center;gap:6px;margin-bottom:.4rem">'
         f'{icon_svg}<span>{text}</span></{tag}>',
         unsafe_allow_html=True)
+
+
+@st.cache_data(ttl=600)
+def get_brazilian_news(ticker_name, empresa_name):
+    # Clean up company name to improve search query (remove SA, ON, PN, etc.)
+    clean_empresa = re.sub(r'\b(S\.?A\.?|ON|PN|LTD\.?|LIMITADA|HOLDING|UNIP)\b', '', empresa_name, flags=re.IGNORECASE).strip()
+    query = f"{ticker_name} OR \"{clean_empresa}\""
+    encoded_query = urllib.parse.quote(query)
+    
+    url = f"https://news.google.com/rss/search?q={encoded_query}&hl=pt-BR&gl=BR&ceid=BR:pt-419"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    req = urllib.request.Request(url, headers=headers)
+    
+    try:
+        with urllib.request.urlopen(req) as response:
+            xml_data = response.read()
+        
+        root = ET.fromstring(xml_data)
+        news_items = []
+        for item in root.findall('.//item')[:6]:
+            title = item.find('title').text if item.find('title') is not None else ''
+            link = item.find('link').text if item.find('link') is not None else ''
+            pub_date = item.find('pubDate').text if item.find('pubDate') is not None else ''
+            source = item.find('source').text if item.find('source') is not None else ''
+            
+            # Format date nicely
+            formatted_date = ""
+            if pub_date:
+                try:
+                    dt = email.utils.parsedate_to_datetime(pub_date)
+                    formatted_date = dt.strftime('%d/%m/%Y %H:%M')
+                except:
+                    formatted_date = pub_date
+            
+            # Clean source name from title
+            if source and title.endswith(f" - {source}"):
+                title = title[:-len(f" - {source}")]
+                
+            news_items.append({
+                'title': title,
+                'link': link,
+                'date': formatted_date,
+                'provider': source,
+                'summary': ''
+            })
+        return news_items
+    except Exception as e:
+        return []
+
 
 # Sidebar Principal
 st.sidebar.markdown("""
@@ -790,11 +844,19 @@ if tickers:
 
         st.markdown("---")
 
-        # Descrições e Notícias yfinance
+        # Descrições e Notícias B3
         descriptions = []
         company_news = {}
         for t in tickers_yf:
             ticker_name = t.replace(".SA", "")
+            empresa_name = ""
+            if ticker_name in df.index:
+                val = df.loc[ticker_name, 'Empresa']
+                if isinstance(val, pd.Series):
+                    empresa_name = val.iloc[-1]
+                else:
+                    empresa_name = str(val)
+
             try:
                 ticker_obj = yf.Ticker(t)
                 info = ticker_obj.get_info()
@@ -802,52 +864,9 @@ if tickers:
             except Exception as e:
                 descriptions.append('Não disponível')
 
-            # Buscar notícias do Yahoo Finance
-            try:
-                raw_news = ticker_obj.news
-                parsed_news = []
-                for item in raw_news:
-                    content = item.get('content', item)
-                    title = content.get('title', 'Sem Título')
-                    summary = content.get('summary', '')
-                    if not summary:
-                        summary = content.get('description', '')
-                    
-                    provider = ''
-                    if 'provider' in content:
-                        provider = content['provider'].get('displayName', '')
-                    if not provider:
-                        provider = item.get('publisher', '')
-                        
-                    link = ''
-                    if 'clickThroughUrl' in content:
-                        link = content['clickThroughUrl'].get('url', '')
-                    if not link and 'canonicalUrl' in content:
-                        link = content['canonicalUrl'].get('url', '')
-                    if not link:
-                        link = item.get('link', '')
-                        
-                    pub_date = content.get('pubDate', '')
-                    if not pub_date:
-                        pub_time = item.get('providerPublishTime', None)
-                        if pub_time:
-                            import datetime
-                            pub_date = datetime.datetime.fromtimestamp(pub_time).strftime('%Y-%m-%d %H:%M:%S')
-                    
-                    # Formata data para exibição limpa (AAAA-MM-DD HH:MM)
-                    if pub_date and 'T' in pub_date:
-                        pub_date = pub_date.replace('T', ' ').replace('Z', '')[:16]
+            # Buscar notícias de portais brasileiros via Google News RSS
+            company_news[ticker_name] = get_brazilian_news(ticker_name, empresa_name)
 
-                    parsed_news.append({
-                        'title': title,
-                        'summary': summary,
-                        'provider': provider,
-                        'link': link,
-                        'date': pub_date
-                    })
-                company_news[ticker_name] = parsed_news
-            except Exception as e:
-                company_news[ticker_name] = []
 
         df_desc = pd.DataFrame(descriptions, index=tickers, columns=["Descrição"])
         section_header(ICO_INFO, "Descrição da Empresa", "h3")
@@ -864,6 +883,7 @@ if tickers:
                     news_items = company_news.get(ticker, [])
                     if news_items:
                         for item in news_items:
+                            summary_html = f'<p class="news-summary">{item["summary"]}</p>' if item.get('summary') else ''
                             st.markdown(f"""
                             <div class="news-card">
                                 <div class="news-header">
@@ -873,7 +893,7 @@ if tickers:
                                 <h4 class="news-title">
                                     <a class="news-title-link" href="{item['link']}" target="_blank">{item['title']}</a>
                                 </h4>
-                                <p class="news-summary">{item['summary']}</p>
+                                {summary_html}
                             </div>
                             """, unsafe_allow_html=True)
                     else:
@@ -883,6 +903,7 @@ if tickers:
             news_items = company_news.get(ticker, [])
             if news_items:
                 for item in news_items:
+                    summary_html = f'<p class="news-summary">{item["summary"]}</p>' if item.get('summary') else ''
                     st.markdown(f"""
                     <div class="news-card">
                         <div class="news-header">
@@ -892,7 +913,7 @@ if tickers:
                         <h4 class="news-title">
                             <a class="news-title-link" href="{item['link']}" target="_blank">{item['title']}</a>
                         </h4>
-                        <p class="news-summary">{item['summary']}</p>
+                        {summary_html}
                     </div>
                     """, unsafe_allow_html=True)
             else:
