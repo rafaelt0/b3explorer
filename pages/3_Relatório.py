@@ -1,589 +1,374 @@
 import streamlit as st
+import yfinance as yf
 import pandas as pd
-import quantstats as qs
-import base64
-import os
-import tempfile
 import numpy as np
-import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
-from fpdf import FPDF
-import fundamentus
-from quantstats.stats import max_drawdown, var, cvar
+import datetime
+import warnings
+import plotly.express as px
+import plotly.graph_objects as go
+from pypfopt.hierarchical_portfolio import HRPOpt
+from quantstats.stats import sharpe, sortino, max_drawdown, var, cvar, tail_ratio
+from scipy.stats import kurtosis, skew
+import quantstats as qs
+import matplotlib.ticker as mtick
+
 
 # CSS customizado
 with open("style.css") as f:
     st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
 
-# Hero Header
+# ─── SVG Icon Library ─────────────────────────────────────────────────────────
+def _svg(body, size=14):
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" '
+            f'viewBox="0 0 24 24" fill="none" style="vertical-align:-2px;margin-right:5px">'
+            f'{body}</svg>')
+
+ICO_CHART    = _svg('<rect x="3" y="12" width="3" height="9" rx="1" fill="#00ff87"/>'
+                    '<rect x="9" y="7"  width="3" height="14" rx="1" fill="#00d2ff"/>'
+                    '<rect x="15" y="9" width="3" height="12" rx="1" fill="#ffd600"/>', 16)
+ICO_SIGNAL   = _svg('<path d="M2 12 Q6 4 12 12 Q18 20 22 12" stroke="#00d2ff" stroke-width="2" '
+                    'stroke-linecap="round" fill="none"/>'
+                    '<circle cx="12" cy="12" r="2" fill="#ffd600"/>', 16)
+ICO_FRONTIER = _svg('<path d="M3 20 Q8 8 14 10 Q18 12 21 4" stroke="#00ff87" stroke-width="2" stroke-linecap="round" fill="none"/>'
+                    '<circle cx="18" cy="6" r="2.5" fill="#ff3d5a"/>'
+                    '<circle cx="10" cy="17" r="2" fill="#ffd600"/>', 16)
+ICO_METRICS  = _svg('<rect x="3" y="3" width="18" height="18" rx="3" stroke="#94a3b8" stroke-width="1.5"/>'
+                    '<line x1="7" y1="9"  x2="17" y2="9"  stroke="#00ff87" stroke-width="1.8" stroke-linecap="round"/>'
+                    '<line x1="7" y1="13" x2="14" y2="13" stroke="#94a3b8" stroke-width="1.2" stroke-linecap="round"/>'
+                    '<line x1="7" y1="17" x2="15" y2="17" stroke="#94a3b8" stroke-width="1.2" stroke-linecap="round"/>', 16)
+
+def section_header(icon_svg, text, tag="h3"):
+    st.markdown(
+        f'<{tag} style="display:flex;align-items:center;gap:6px;margin-bottom:.4rem">'
+        f'{icon_svg}<span>{text}</span></{tag}>',
+        unsafe_allow_html=True)
+
+def render_cards_grid(data_dict, colors_sequence=None):
+    if not colors_sequence:
+        colors_sequence = ["#38bdf8", "#4ade80", "#fbbf24", "#fb7185", "#c084fc", "#f472b6", "#34d399", "#60a5fa"]
+    
+    items = list(data_dict.items())
+    num_cols = 4
+    for i in range(0, len(items), num_cols):
+        chunk = items[i:i+num_cols]
+        cols = st.columns(num_cols)
+        for col, (label, val) in zip(cols, chunk):
+            color = colors_sequence[items.index((label, val)) % len(colors_sequence)]
+            with col:
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #0e1726, #070c14); 
+                            border: 1px solid #1e293b; 
+                            border-radius: 10px; 
+                            padding: 0.8rem; 
+                            text-align: center; 
+                            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                            margin-bottom: 0.5rem;
+                            min-height: 90px;
+                            display: flex;
+                            flex-direction: column;
+                            justify-content: center;
+                            align-items: center;">
+                    <div style="font-size: 0.75rem; color: #94a3b8; font-weight: 600; text-transform: uppercase; margin-bottom: 0.3rem; letter-spacing: 0.05em;">{label}</div>
+                    <div style="font-size: 1.1rem; color: {color}; font-weight: 800; font-family: 'JetBrains Mono', monospace;">{val}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+# Configurar temas de plotagem escuros
+plt.style.use('dark_background')
+plt.rcParams['figure.facecolor'] = '#080c14'
+plt.rcParams['axes.facecolor'] = '#0e1524'
+plt.rcParams['text.color'] = '#f8fafc'
+plt.rcParams['axes.labelcolor'] = '#94a3b8'
+plt.rcParams['xtick.color'] = '#94a3b8'
+plt.rcParams['ytick.color'] = '#94a3b8'
+plt.rcParams['grid.color'] = '#1e293b'
+plt.rcParams['font.family'] = 'sans-serif'
+
+# Customização do Plotly para o tema Obsidian Neo-Financial
+def apply_plotly_theme(fig):
+    fig.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(family="Space Grotesk, sans-serif", color="#f8fafc"),
+        xaxis=dict(
+            gridcolor='#1e293b',
+            linecolor='#1e293b',
+            tickfont=dict(family="JetBrains Mono, monospace", color="#94a3b8")
+        ),
+        yaxis=dict(
+            gridcolor='#1e293b',
+            linecolor='#1e293b',
+            tickfont=dict(family="JetBrains Mono, monospace", color="#94a3b8")
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.3,
+            xanchor="center",
+            x=0.5,
+            bgcolor='rgba(14, 21, 36, 0.8)',
+            bordercolor='#1e293b',
+            borderwidth=1
+        ),
+        margin=dict(b=80)
+    )
+    return fig
+
+# ── Hero Header ─────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="page-hero">
     <div class="page-hero-icon">
         <svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 60 60" fill="none">
-          <!-- Document body -->
-          <rect x="10" y="4" width="40" height="52" rx="5" fill="#0e1524" stroke="#1e293b" stroke-width="1.5"/>
-          <!-- Fold corner -->
-          <path d="M38 4 L50 16 L38 16 Z" fill="#080c14" stroke="#1e293b" stroke-width="1"/>
-          <!-- Header line (green accent) -->
-          <line x1="16" y1="24" x2="44" y2="24" stroke="#00ff87" stroke-width="2.5" stroke-linecap="round"/>
-          <!-- Body text lines -->
-          <line x1="16" y1="31" x2="40" y2="31" stroke="#334155" stroke-width="1.5" stroke-linecap="round"/>
-          <line x1="16" y1="36" x2="36" y2="36" stroke="#334155" stroke-width="1.5" stroke-linecap="round"/>
-          <!-- Mini bar chart -->
-          <rect x="16" y="47" width="5" height="7"  rx="1.5" fill="#00ff87"/>
-          <rect x="24" y="43" width="5" height="11" rx="1.5" fill="#00d2ff"/>
-          <rect x="32" y="45" width="5" height="9"  rx="1.5" fill="#ffd600"/>
-          <rect x="40" y="40" width="5" height="14" rx="1.5" fill="#a855f7"/>
+          <!-- Background grid lines -->
+          <line x1="4" y1="56" x2="56" y2="56" stroke="#1e293b" stroke-width="1"/>
+          <line x1="4" y1="42" x2="56" y2="42" stroke="#1e293b" stroke-width="0.5" stroke-dasharray="3 3"/>
+          <line x1="4" y1="28" x2="56" y2="28" stroke="#1e293b" stroke-width="0.5" stroke-dasharray="3 3"/>
+          <!-- Stochastic path — upper scenario (cyan, faint) -->
+          <path d="M8 48 C14 38 18 32 24 38 S34 46 44 22 50 10 56 14"
+                stroke="#00d2ff" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.45"/>
+          <!-- Stochastic path — lower scenario (green, faint) -->
+          <path d="M8 50 C16 44 20 40 26 44 S38 50 46 30 52 20 56 24"
+                stroke="#00ff87" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.45"/>
+          <!-- Median trajectory (gold, prominent) -->
+          <path d="M8 49 C14 40 20 36 26 41 S38 48 46 26 52 14 56 18"
+                stroke="#ffd600" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <!-- Origin node -->
+          <circle cx="8" cy="49" r="3.5" fill="#ffd600" opacity="0.9"/>
+          <!-- End nodes -->
+          <circle cx="56" cy="14" r="2.5" fill="#00d2ff" opacity="0.7"/>
+          <circle cx="56" cy="24" r="2.5" fill="#00ff87" opacity="0.7"/>
+          <circle cx="56" cy="18" r="3.5" fill="#ffd600" opacity="0.9"/>
         </svg>
     </div>
     <div class="page-hero-content">
-        <h1 class="page-hero-title">Relatório Executivo PDF</h1>
-        <p class="page-hero-subtitle">Gere um documento PDF completo e detalhado contendo a análise de alocação, indicadores fundamentalistas e projeção Monte Carlo.</p>
+        <h1 class="page-hero-title">Simulação Monte Carlo</h1>
+        <p class="page-hero-subtitle">Projete trajetórias de retorno com 1.000+ simulações estocásticas e avalie o espectro de cenários para o seu portfólio.</p>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
 # Verifica se as variáveis necessárias já estão no session_state
-required_keys = ["modo", "returns", "pesos_manuais", "peso_manual_df", "portfolio_returns", "retorno_bench"]
+required_keys = ["modo", "returns", "pesos_manuais", "peso_manual_df"]
 for key in required_keys:
     if key not in st.session_state:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        st.warning("Configure primeiro seu portfólio na aba Portfolio para liberar a geração do relatório.")
+        st.warning("Configure primeiro seu portfólio na aba **Portfolio** para liberar a Simulação Monte Carlo.")
         st.stop()
 
-# Recupera variáveis
+# Recupera as variáveis da aba 1
 modo = st.session_state["modo"]
 returns = st.session_state["returns"]
 pesos_manuais = st.session_state["pesos_manuais"]
 peso_manual_df = st.session_state["peso_manual_df"]
-portfolio_returns = st.session_state["portfolio_returns"]
-retorno_bench = st.session_state["retorno_bench"]
-portfolio_value = st.session_state.get("portfolio_value")
-valor_inicial = st.session_state.get("valor_investido", 10000.0)
-taxa_selic = st.session_state.get("taxa_selic", 0.1075)
 
-if taxa_selic > 1.0:
-    taxa_selic = taxa_selic / 100.0
 
-selic_diaria = taxa_selic / 252
 
-# Converte datas
-portfolio_returns.index = pd.to_datetime(portfolio_returns.index, errors='coerce')
-portfolio_returns = portfolio_returns.tz_localize(None)
-retorno_bench.index = pd.to_datetime(retorno_bench.index, errors='coerce')
-retorno_bench = retorno_bench.tz_localize(None)
+with st.form("form_simulacao"):
+    n_simulations = st.slider("Número de Simulações", 10, 500, 200,
+                              help="Quantidade de trajetórias simuladas para o portfólio.")
+    valor = st.number_input("Capital Inicial (R$)", min_value=100,
+                            help="Valor inicial investido no portfólio.")
+    years = int(st.number_input("Anos", min_value=1,
+                                help="Horizonte da simulação em anos."))
+    
+    submitted = st.form_submit_button("Rodar Simulação", type="primary", use_container_width=True)
 
-# Limpeza de strings para FPDF Latin-1
-def clean_txt(text):
-    if not isinstance(text, str):
-        text = str(text)
-    replacements = {
-        'ã': 'a', 'á': 'a', 'à': 'a', 'â': 'a', 'ä': 'a',
-        'Õ': 'O', 'ó': 'o', 'ò': 'o', 'ô': 'o', 'ö': 'o',
-        'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
-        'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
-        'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
-        'ç': 'c', 'Ç': 'C',
-        'Ã': 'A', 'Á': 'A', 'À': 'A', 'Â': 'A', 'Ä': 'A',
-        'Õ': 'O', 'Ó': 'O', 'Ò': 'O', 'Ô': 'O', 'Ö': 'O',
-        'É': 'E', 'È': 'E', 'Ê': 'E', 'Ë': 'E',
-        'Í': 'I', 'Ì': 'I', 'Î': 'I', 'Ï': 'I',
-        'Ú': 'U', 'Ù': 'U', 'Û': 'U', 'Ü': 'U',
-        'º': 'o', 'ª': 'a', '﹪': '%', '—': '-', '–': '-',
-    }
-    for k, v in replacements.items():
-        text = text.replace(k, v)
-    return text.encode('latin-1', 'replace').decode('latin-1')
+if not submitted:
+    st.info("Configure os parâmetros acima e clique em 'Rodar Simulação' para ver os resultados.")
+    st.stop()
 
-def clean_numeric_column(col):
-    col = col.astype(str).str.strip()
-    col = col.str.replace(r'[^0-9,.\-]', '', regex=True)
-    col = col.str.replace(',', '.')
-    return pd.to_numeric(col, errors='coerce')
-
-# Matplotlib light theme para PDF
-def apply_pdf_chart_theme(fig, ax):
-    fig.patch.set_facecolor('#ffffff')
-    ax.set_facecolor('#f8fafc')
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['left'].set_color('#cbd5e1')
-    ax.spines['bottom'].set_color('#cbd5e1')
-    ax.tick_params(colors='#475569', labelsize=8)
-    ax.yaxis.label.set_color('#475569')
-    ax.xaxis.label.set_color('#475569')
-    ax.title.set_color('#0f172a')
-    ax.grid(True, color='#e2e8f0', linestyle=':', alpha=0.8)
-
-@st.cache_data(ttl=3600)
-def get_fundamentus_report_data(tickers_list):
-    data_list = []
-    for t in tickers_list:
-        try:
-            p = fundamentus.get_papel(t)
-            data_list.append(p)
-        except Exception:
-            pass
-    if data_list:
-        return pd.concat(data_list)
-    return pd.DataFrame()
-
-# Tickers
-tickers_yf = list(returns.columns)
-tickers_clean = [t.replace(".SA", "") for t in tickers_yf]
-df_fund = get_fundamentus_report_data(tickers_clean)
-
-class PDF(FPDF):
-    def header(self):
-        # Top accent bar
-        self.set_fill_color(14, 21, 36)
-        self.rect(0, 0, 210, 4, 'F')
-        
-        self.set_text_color(15, 23, 42)
-        self.set_font('Arial', 'B', 14)
-        self.cell(0, 10, clean_txt('B3 EXPLORER - RELATÓRIO DO PORTFÓLIO'), 0, 1, 'L')
-        
-        self.set_text_color(71, 85, 105)
-        self.set_font('Arial', 'I', 9)
-        self.cell(0, 4, clean_txt('Analise Quantitativa, Alocacao Setorial, Retornos Mensais e Simulacao Estocastica'), 0, 1, 'L')
-        
-        self.set_draw_color(226, 232, 240)
-        self.line(15, 24, 195, 24)
-        self.ln(6)
-
-    def footer(self):
-        self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
-        self.set_text_color(148, 163, 184)
-        self.cell(0, 10, clean_txt(f'Pagina {self.page_no()}'), 0, 0, 'C')
-        self.cell(0, 10, clean_txt(datetime.date.today().strftime('%d/%m/%Y')), 0, 0, 'R')
-
-def draw_section_header(pdf, title):
-    pdf.set_fill_color(241, 245, 249)
-    pdf.set_text_color(15, 23, 42)
-    pdf.set_font('Arial', 'B', 11)
-    pdf.cell(0, 8, clean_txt(f"  {title}"), 0, 1, 'L', fill=True)
-    pdf.ln(3)
-
-def get_weight_val(row):
-    for col in ["Pesos Otimizados", "Pesos", "Peso"]:
-        if col in row.index:
-            return row[col]
-    return row.iloc[0]
-
-# Tela de carregamento enquanto o PDF e os gráficos são gerados
 loading_placeholder = st.empty()
 with loading_placeholder.container():
     st.markdown("""
     <div class="loading-container">
         <div class="loading-spinner"></div>
-        <div class="loading-text">Compilando estatísticas de performance e gerando PDF completo...</div>
+        <div class="loading-text">Rodando simulações Monte Carlo multivariadas...</div>
     </div>
     """, unsafe_allow_html=True)
 
-try:
-    pdf = PDF()
-    pdf.set_margins(15, 15, 15)
-    pdf.add_page()
+st.markdown("---")
 
-    # ─── SECÇÃO 1: CONFIGURAÇÃO E ALOCAÇÃO ───
-    draw_section_header(pdf, '1. CONFIGURACAO E COMPOSICAO DA CARTEIRA')
-    pdf.set_font('Arial', '', 9)
-    pdf.cell(0, 5, clean_txt(f"Modo de Alocacao: {modo}"), 0, 1)
-    pdf.cell(0, 5, clean_txt(f"Periodo Historico (Lookback): {st.session_state.get('lookback', '3 Anos')}"), 0, 1)
-    pdf.cell(0, 5, clean_txt(f"Capital Inicial Investido: R$ {valor_inicial:,.2f}"), 0, 1)
-    pdf.ln(3)
+n_dias = years * 252  # 252 dias úteis no ano
+valor_inicial = valor
 
-    pdf.set_font('Arial', 'B', 9)
-    pdf.set_fill_color(226, 232, 240)
-    pdf.cell(30, 7, clean_txt('Ticker'), 1, 0, 'C', fill=True)
-    pdf.cell(110, 7, clean_txt('Empresa'), 1, 0, 'L', fill=True)
-    pdf.cell(40, 7, clean_txt('Peso (%)'), 1, 1, 'R', fill=True)
+# Garante que temos um dicionário de pesos, independente do modo escolhido
+if modo == "Alocação Manual":
+    pesos_dict = pesos_manuais
+else:
+    pesos_dict = dict(zip(peso_manual_df.index + ".SA", peso_manual_df["Peso"].values))
 
-    pdf.set_font('Arial', '', 9)
-    pesos_dict = {}
-    for idx, row in peso_manual_df.iterrows():
-        t_clean = str(idx).replace('.SA', '')
-        val = get_weight_val(row)
-        pesos_dict[str(idx)] = val
-        
-        emp_name = "-"
-        if not df_fund.empty and t_clean in df_fund.index:
-            emp_name = str(df_fund.loc[t_clean, 'Empresa'])
-            
-        pdf.cell(30, 6, clean_txt(t_clean), 1, 0, 'C')
-        pdf.cell(110, 6, clean_txt(emp_name), 1, 0, 'L')
-        pdf.cell(40, 6, clean_txt(f"{val*100:.2f}%"), 1, 1, 'R')
-    pdf.ln(6)
+# Remove ativos com peso zero (se houver)
+pesos_dict = {k: v for k, v in pesos_dict.items() if v > 1e-6}
 
-    # Composição Setorial
-    sector_weights = {}
-    if not df_fund.empty:
-        for ticker_clean, row in df_fund.iterrows():
-            t_sa = ticker_clean + ".SA"
-            if t_sa in pesos_dict:
-                sector = row.get("Setor", "Outros")
-                sector_weights[sector] = sector_weights.get(sector, 0.0) + pesos_dict[t_sa]
-                
-    if sector_weights:
-        pdf.set_font('Arial', 'B', 9)
-        pdf.cell(0, 6, clean_txt('Composicao Setorial da Carteira:'), 0, 1)
-        pdf.set_fill_color(241, 245, 249)
-        pdf.cell(110, 6, clean_txt('Setor'), 1, 0, 'L', fill=True)
-        pdf.cell(70, 6, clean_txt('Peso Acumulado (%)'), 1, 1, 'R', fill=True)
-        pdf.set_font('Arial', '', 9)
-        for s_name, s_weight in sorted(sector_weights.items(), key=lambda x: x[1], reverse=True):
-            pdf.cell(110, 6, clean_txt(s_name), 1, 0, 'L')
-            pdf.cell(70, 6, clean_txt(f"{s_weight*100:.2f}%"), 1, 1, 'R')
-        pdf.ln(6)
+aligned_returns = returns.loc[:, pesos_dict.keys()].dropna()
 
-    # ─── SECÇÃO 2: MÉTRICAS DE PERFORMANCE E RISCO ───
-    pdf.add_page()
-    draw_section_header(pdf, '2. METRICAS DE PERFORMANCE E RISCO')
-    
-    # Cálculos das métricas
-    total_ret = (portfolio_value.iloc[-1] / valor_inicial - 1) * 100
-    vol_anual = portfolio_returns.std() * np.sqrt(252) * 100
-    excesso_ret = portfolio_returns - selic_diaria
-    sharpe_anual = (excesso_ret.mean() / portfolio_returns.std()) * np.sqrt(252) if portfolio_returns.std() > 0 else 0.0
-    sortino_anual = (excesso_ret.mean() / portfolio_returns[portfolio_returns < 0].std()) * np.sqrt(252) if portfolio_returns[portfolio_returns < 0].std() > 0 else 0.0
-    max_dd_val = max_drawdown(portfolio_returns) * 100
-    var_val = var(portfolio_returns) * 100
-    cvar_val = cvar(portfolio_returns) * 100
+pesos = np.array(list(pesos_dict.values()))
 
-    # Beta, Alfa e R2 vs benchmark
-    cov_matrix = np.cov(portfolio_returns, retorno_bench)
-    beta_val = cov_matrix[0, 1] / cov_matrix[1, 1] if cov_matrix[1, 1] > 0 else 1.0
-    alfa_anual = (portfolio_returns.mean() - beta_val * retorno_bench.mean()) * 252 * 100
-    r_quadrado_val = (cov_matrix[0, 1] ** 2) / (cov_matrix[0, 0] * cov_matrix[1, 1]) * 100 if (cov_matrix[0, 0] * cov_matrix[1, 1]) > 0 else 0.0
-    
-    metrics_list = [
-        ("Retorno Total Acumulado", f"{total_ret:.2f}%"),
-        ("Volatilidade Anualizada", f"{vol_anual:.2f}%"),
-        ("Indice Sharpe Anualizado", f"{sharpe_anual:.2f}"),
-        ("Indice Sortino Anualizado", f"{sortino_anual:.2f}"),
-        ("Maximo Drawdown", f"{max_dd_val:.2f}%"),
-        ("Beta vs IBOVESPA", f"{beta_val:.4f}"),
-        ("Alfa de Jensen Anualizado", f"{alfa_anual:.2f}%"),
-        ("R-Quadrado (R2) vs IBOVESPA", f"{r_quadrado_val:.2f}%"),
-        ("VaR Diario (95%)", f"{var_val:.2f}%"),
-        ("CVaR Diario (95%)", f"{cvar_val:.2f}%"),
-    ]
+mu = aligned_returns.mean().values  # vetor média de retorno diário
+cov = aligned_returns.cov().values  # matriz covariância diária
 
-    pdf.set_font('Arial', 'B', 9)
-    pdf.set_fill_color(226, 232, 240)
-    pdf.cell(100, 7, clean_txt('Metrica de Performance'), 1, 0, 'L', fill=True)
-    pdf.cell(80, 7, clean_txt('Valor Calculado'), 1, 1, 'R', fill=True)
+np.random.seed(42)  # para reprodutibilidade
 
-    pdf.set_font('Arial', '', 9)
-    for label, val_str in metrics_list:
-        pdf.cell(100, 6, clean_txt(label), 1, 0, 'L')
-        pdf.cell(80, 6, clean_txt(val_str), 1, 1, 'R')
-    pdf.ln(6)
+# Simular retornos multivariados normais correlacionados
+retornos_simulados = np.random.multivariate_normal(mu, cov, size=(n_dias, n_simulations))
 
-    # ─── SECÇÃO 3: RETORNOS MENSAIS DO PORTFÓLIO ───
-    draw_section_header(pdf, '3. TABELA DE RETORNOS MENSAIS DO PORTFOLIO')
-    try:
-        monthly_ret = portfolio_returns.groupby([portfolio_returns.index.year, portfolio_returns.index.month]).apply(lambda x: (1 + x).prod() - 1)
-        monthly_ret_df = monthly_ret.unstack(level=1) * 100
-        monthly_ret_df = monthly_ret_df.reindex(columns=range(1, 13))
-        month_names = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
-        monthly_ret_df.columns = month_names
-        
-        ytd_ret = portfolio_returns.groupby(portfolio_returns.index.year).apply(lambda x: (1 + x).prod() - 1) * 100
-        monthly_ret_df["YTD"] = ytd_ret
+# Calcular trajetórias para cada ativo em cada simulação
+precos_simulados = np.exp(retornos_simulados.cumsum(axis=0))
 
-        # Imprime cabeçalho da tabela
-        pdf.set_font('Arial', 'B', 8)
-        pdf.set_fill_color(226, 232, 240)
-        pdf.cell(15, 7, clean_txt('Ano'), 1, 0, 'C', fill=True)
-        for m in month_names:
-            pdf.cell(12, 7, clean_txt(m), 1, 0, 'C', fill=True)
-        pdf.cell(21, 7, clean_txt('YTD'), 1, 1, 'C', fill=True)
+# Calcular valor do portfólio: soma ponderada dos ativos para cada dia e simulação
+valor_portfolio = (precos_simulados * pesos).sum(axis=2) * valor_inicial
 
-        # Imprime linhas da tabela
-        pdf.set_font('Arial', '', 8)
-        for year, row in monthly_ret_df.iterrows():
-            pdf.cell(15, 6, str(year), 1, 0, 'C')
-            for m in month_names:
-                val = row[m]
-                if pd.isna(val):
-                    pdf.cell(12, 6, '-', 1, 0, 'C')
-                else:
-                    if val > 0:
-                        pdf.set_text_color(21, 128, 61)
-                    else:
-                        pdf.set_text_color(185, 28, 28)
-                    pdf.cell(12, 6, f"{val:+.1f}%", 1, 0, 'C')
-                    pdf.set_text_color(15, 23, 42) # reset
-            ytd_val = row["YTD"]
-            if pd.isna(ytd_val):
-                pdf.cell(21, 6, '-', 1, 1, 'C')
-            else:
-                pdf.set_font('Arial', 'B', 8)
-                if ytd_val > 0:
-                    pdf.set_text_color(21, 128, 61)
-                else:
-                    pdf.set_text_color(185, 28, 28)
-                pdf.cell(21, 6, f"{ytd_val:+.2f}%", 1, 1, 'C')
-                pdf.set_font('Arial', '', 8)
-                pdf.set_text_color(15, 23, 42)
-    except Exception as e:
-        pdf.set_font('Arial', 'I', 9)
-        pdf.cell(0, 6, clean_txt(f"Erro ao gerar tabela de retornos mensais: {str(e)}"), 0, 1)
-    pdf.ln(6)
+# Criar DataFrame para facilitar manipulação e plotagem
+datas = pd.date_range(start=datetime.date.today(), periods=n_dias+1, freq='B')
+valor_portfolio = np.vstack([np.ones(n_simulations)*valor_inicial, valor_portfolio])
+sim_df = pd.DataFrame(valor_portfolio, index=datas)
 
-    # ─── SECÇÃO 4: INDICADORES FUNDAMENTALISTAS ───
-    if not df_fund.empty:
-        pdf.add_page()
-        draw_section_header(pdf, '4. INDICADORES FUNDAMENTALISTAS DAS EMPRESAS')
-        
-        pdf.set_font('Arial', 'B', 8)
-        pdf.set_fill_color(226, 232, 240)
-        pdf.cell(20, 7, clean_txt('Ticker'), 1, 0, 'C', fill=True)
-        pdf.cell(50, 7, clean_txt('Setor'), 1, 0, 'L', fill=True)
-        pdf.cell(22, 7, clean_txt('P/L'), 1, 0, 'R', fill=True)
-        pdf.cell(22, 7, clean_txt('P/VP'), 1, 0, 'R', fill=True)
-        pdf.cell(22, 7, clean_txt('DY (%)'), 1, 0, 'R', fill=True)
-        pdf.cell(22, 7, clean_txt('ROE (%)'), 1, 0, 'R', fill=True)
-        pdf.cell(22, 7, clean_txt('ROIC (%)'), 1, 1, 'R', fill=True)
-        
-        pdf.set_font('Arial', '', 8)
-        for ticker_clean, row in df_fund.iterrows():
-            pl_val = clean_numeric_column(pd.Series([row.get('PL', 0.0)])).fillna(0).iloc[0]
-            pvp_val = clean_numeric_column(pd.Series([row.get('PVP', 0.0)])).fillna(0).iloc[0]
-            dy_val = clean_numeric_column(pd.Series([row.get('Div_Yield', 0.0)])).fillna(0).iloc[0]
-            roe_val = clean_numeric_column(pd.Series([row.get('ROE', 0.0)])).fillna(0).iloc[0]
-            roic_val = clean_numeric_column(pd.Series([row.get('ROIC', 0.0)])).fillna(0).iloc[0]
-            setor_name = str(row.get('Setor', '-'))
-            
-            pdf.cell(20, 6, clean_txt(ticker_clean), 1, 0, 'C')
-            pdf.cell(50, 6, clean_txt(setor_name), 1, 0, 'L')
-            pdf.cell(22, 6, clean_txt(f"{pl_val:.2f}"), 1, 0, 'R')
-            pdf.cell(22, 6, clean_txt(f"{pvp_val:.2f}"), 1, 0, 'R')
-            pdf.cell(22, 6, clean_txt(f"{dy_val*100:.2f}%" if dy_val < 1.0 else f"{dy_val:.2f}%"), 1, 0, 'R')
-            pdf.cell(22, 6, clean_txt(f"{roe_val*100:.2f}%" if roe_val < 1.0 else f"{roe_val:.2f}%"), 1, 0, 'R')
-            pdf.cell(22, 6, clean_txt(f"{roic_val*100:.2f}%" if roic_val < 1.0 else f"{roic_val:.2f}%"), 1, 1, 'R')
-        pdf.ln(6)
+# Estatísticas finais da simulação
+valores_finais = sim_df.iloc[-1]
+valor_esperado = valores_finais.mean()
+var_5 = np.percentile(valores_finais, 5)
+cvar_5 = valores_finais[valores_finais <= var_5].mean()
+pior_cenario = valores_finais.min()
+melhor_cenario = valores_finais.max()
 
-    # ─── SECÇÃO 5: SIMULAÇÃO MONTE CARLO ───
-    try:
-        sim_run = st.session_state.get("simulation_run", False)
-        if not sim_run:
-            n_simulations = 200
-            valor_inicial_sim = 10000.0
-            years_sim = 3
-        else:
-            n_simulations = st.session_state["sim_n_simulations"]
-            valor_inicial_sim = st.session_state["sim_valor_inicial"]
-            years_sim = st.session_state["sim_years"]
+sim_stats_dict = {
+    "Valor Esperado Final": f"R$ {valor_esperado:,.2f}",
+    "VaR 5%": f"R$ {var_5:,.2f}",
+    "CVaR 5%": f"R$ {cvar_5:,.2f}",
+    "Pior Cenário": f"R$ {pior_cenario:,.2f}",
+    "Melhor Cenário": f"R$ {melhor_cenario:,.2f}"
+}
 
-        n_dias = years_sim * 252
-        
-        # Filtra pesos não nulos
-        pesos_dict_sim = {k: v for k, v in pesos_dict.items() if v > 1e-6}
-        aligned_returns = returns.loc[:, pesos_dict_sim.keys()].dropna()
-        pesos_sim = np.array(list(pesos_dict_sim.values()))
+section_header(ICO_CHART, "Estatísticas da Simulação Monte Carlo", "h3")
+render_cards_grid(sim_stats_dict)
 
-        mu_sim = aligned_returns.mean().values
-        cov_sim = aligned_returns.cov().values
+st.markdown("""
+<small><b>VaR 5%</b>: Valor máximo esperado que você pode perder em 5% dos piores casos.<br>
+<b>CVaR 5%</b>: Média das perdas nos piores 5% dos casos, mostrando um risco mais extremo.</small>
+""", unsafe_allow_html=True)
 
-        np.random.seed(42)
-        retornos_simulados = np.random.multivariate_normal(mu_sim, cov_sim, size=(n_dias, n_simulations))
-        precos_simulados = np.exp(retornos_simulados.cumsum(axis=0))
-        valor_portfolio_sim = (precos_simulados * pesos_sim).sum(axis=2) * valor_inicial_sim
+# Gráfico com algumas trajetórias individuais para ilustrar a dispersão
+section_header(ICO_SIGNAL, "Trajetórias Individuais das Simulações", "h3")
 
-        datas_sim = pd.date_range(start=datetime.date.today(), periods=n_dias+1, freq='B')
-        valor_portfolio_sim = np.vstack([np.ones(n_simulations)*valor_inicial_sim, valor_portfolio_sim])
-        sim_df = pd.DataFrame(valor_portfolio_sim, index=datas_sim)
+fig_individual = go.Figure()
+n_plot = min(20, n_simulations)  # limitar para 20 linhas para visualização limpa
 
-        valores_finais = sim_df.iloc[-1]
-        valor_esperado = valores_finais.mean()
-        var_5 = np.percentile(valores_finais, 5)
-        cvar_5 = valores_finais[valores_finais <= var_5].mean()
-        pior_cenario = valores_finais.min()
-        melhor_cenario = valores_finais.max()
+for i in range(n_plot):
+    fig_individual.add_trace(go.Scatter(
+        x=sim_df.index,
+        y=sim_df.iloc[:, i],
+        mode='lines',
+        name=f'Simulação {i+1}',
+        line=dict(width=1),
+        opacity=0.4
+    ))
+fig_individual.update_layout(
+    title="Exemplos de Trajetórias Simuladas do Valor do Portfólio",
+    xaxis_title="Data",
+    yaxis_title="Valor do Portfólio (R$)"
+)
+apply_plotly_theme(fig_individual)
+st.plotly_chart(fig_individual, use_container_width=True)
 
-        q1 = valores_finais.quantile(0.25)
-        q2 = valores_finais.quantile(0.50)
-        q3 = valores_finais.quantile(0.75)
+# Fan chart com percentis
+percentis = [5, 25, 50, 75, 95]
+fan_chart = sim_df.quantile(q=np.array(percentis) / 100, axis=1).T
+fan_chart.columns = [f"P{p}" for p in percentis]
 
-        # Plot 1: Trajetórias
-        fig_ind, ax_ind = plt.subplots(figsize=(8, 3.5))
-        n_plot = min(20, n_simulations)
-        for idx_sim in range(n_plot):
-            ax_ind.plot(sim_df.index, sim_df.iloc[:, idx_sim], color='#0ea5e9', alpha=0.35, linewidth=0.8)
-        ax_ind.set_title("Exemplos de Trajetorias Simuladas", fontsize=11, fontweight='bold', pad=10)
-        ax_ind.set_ylabel("Valor do Portfolio (R$)")
-        ax_ind.set_xlabel("Data")
-        apply_pdf_chart_theme(fig_ind, ax_ind)
-        fig_ind.tight_layout()
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f_ind:
-            path_ind = f_ind.name
-            fig_ind.savefig(path_ind, dpi=150)
-            plt.close(fig_ind)
+fig_fan = go.Figure()
+fig_fan.add_trace(go.Scatter(
+    x=fan_chart.index, y=fan_chart["P95"],
+    line=dict(color='rgba(0, 210, 255, 0.05)'), showlegend=False
+))
+fig_fan.add_trace(go.Scatter(
+    x=fan_chart.index, y=fan_chart["P5"],
+    fill='tonexty', fillcolor='rgba(0, 210, 255, 0.1)',
+    line=dict(color='rgba(0, 210, 255, 0.05)'), name='Faixa 5%-95%'
+))
+fig_fan.add_trace(go.Scatter(
+    x=fan_chart.index, y=fan_chart["P75"],
+    line=dict(color='rgba(0, 210, 255, 0.1)'), showlegend=False
+))
+fig_fan.add_trace(go.Scatter(
+    x=fan_chart.index, y=fan_chart["P25"],
+    fill='tonexty', fillcolor='rgba(0, 210, 255, 0.25)',
+    line=dict(color='rgba(0, 210, 255, 0.1)'), name='Faixa 25%-75%'
+))
+fig_fan.add_trace(go.Scatter(
+    x=fan_chart.index, y=fan_chart["P50"],
+    line=dict(color='#00ff87', width=2.5), name='Mediana'
+))
+fig_fan.update_layout(
+    title="Simulação Monte Carlo por Ativos - Fan Chart com Faixas de Confiança",
+    xaxis_title="Data",
+    yaxis_title="Valor do Portfólio (R$)"
+)
+apply_plotly_theme(fig_fan)
+st.plotly_chart(fig_fan, use_container_width=True)
 
-        # Plot 2: Fan Chart
-        percentis = [5, 25, 50, 75, 95]
-        fan_chart = sim_df.quantile(q=np.array(percentis) / 100, axis=1).T
-        fan_chart.columns = [f"P{p}" for p in percentis]
-        fig_fan, ax_fan = plt.subplots(figsize=(8, 3.5))
-        ax_fan.fill_between(fan_chart.index, fan_chart["P5"], fan_chart["P95"], color='#bae6fd', alpha=0.4, label='Faixa 5%-95%')
-        ax_fan.fill_between(fan_chart.index, fan_chart["P25"], fan_chart["P75"], color='#7dd3fc', alpha=0.5, label='Faixa 25%-75%')
-        ax_fan.plot(fan_chart.index, fan_chart["P50"], color='#0284c7', linewidth=2, label='Mediana')
-        ax_fan.set_title("Fan Chart com Faixas de Confianca", fontsize=11, fontweight='bold', pad=10)
-        ax_fan.set_ylabel("Valor do Portfolio (R$)")
-        ax_fan.set_xlabel("Data")
-        ax_fan.legend(loc='upper left', fontsize=8, frameon=True, facecolor='#ffffff', edgecolor='#cbd5e1')
-        apply_pdf_chart_theme(fig_fan, ax_fan)
-        fig_fan.tight_layout()
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f_fan:
-            path_fan = f_fan.name
-            fig_fan.savefig(path_fan, dpi=150)
-            plt.close(fig_fan)
+# Histograma valor final
+q1 = valores_finais.quantile(0.25)
+q2 = valores_finais.quantile(0.50)
+q3 = valores_finais.quantile(0.75)
 
-        # Plot 3: Histograma
-        fig_hist, ax_hist = plt.subplots(figsize=(8, 3.5))
-        sns.histplot(valores_finais, bins=30, kde=True, color='#0284c7', edgecolor='#ffffff', alpha=0.6, ax=ax_hist)
-        ax_hist.axvline(q1, color='#ef4444', linestyle='--', linewidth=1.2, label='Q1 (25%)')
-        ax_hist.axvline(q2, color='#22c55e', linestyle='-', linewidth=1.5, label='Mediana (50%)')
-        ax_hist.axvline(q3, color='#eab308', linestyle='--', linewidth=1.2, label='Q3 (75%)')
-        ax_hist.set_title("Distribuicao dos Valores Finais", fontsize=11, fontweight='bold', pad=10)
-        ax_hist.set_xlabel("Valor Final do Portfolio (R$)")
-        ax_hist.set_ylabel("Frequencia")
-        ax_hist.legend(loc='upper right', fontsize=8, frameon=True, facecolor='#ffffff', edgecolor='#cbd5e1')
-        apply_pdf_chart_theme(fig_hist, ax_hist)
-        fig_hist.tight_layout()
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f_hist:
-            path_hist = f_hist.name
-            fig_hist.savefig(path_hist, dpi=150)
-            plt.close(fig_hist)
+section_header(ICO_FRONTIER, "Distribuição do Valor Final do Portfólio", "h3")
+fig_hist = px.histogram(
+    x=valores_finais,
+    nbins=30,
+    title="Distribuição dos Valores Finais da Simulação Monte Carlo",
+    labels={'x': 'Valor Final do Portfólio (R$)', 'y': 'Frequência'},
+    color_discrete_sequence=['#00d2ff']
+)
+fig_hist.update_layout(
+    xaxis_title="Valor Final do Portfólio (R$)",
+    yaxis_title="Frequência",
+    bargap=0.05
+)
 
-        pdf.add_page()
-        draw_section_header(pdf, '5. PROJECAO E RISCO ESTOCASTICO (MONTE CARLO)')
-        
-        pdf.set_font('Arial', '', 9)
-        pdf.cell(0, 5, clean_txt(f"Capital Inicial Projetado: R$ {valor_inicial_sim:,.2f}  |  Horizonte: {years_sim} Anos  |  Trajetorias: {n_simulations}"), 0, 1)
-        pdf.ln(3)
-        
-        pdf.set_font('Arial', 'B', 9)
-        pdf.set_fill_color(226, 232, 240)
-        pdf.cell(100, 7, clean_txt('Metrica Estocastica'), 1, 0, 'L', fill=True)
-        pdf.cell(80, 7, clean_txt('Valor Projetado'), 1, 1, 'R', fill=True)
-        
-        pdf.set_font('Arial', '', 9)
-        pdf.cell(100, 6, clean_txt('Valor Esperado Final (Media)'), 1, 0, 'L')
-        pdf.cell(80, 6, clean_txt(f"R$ {valor_esperado:,.2f}"), 1, 1, 'R')
-        pdf.cell(100, 6, clean_txt('VaR 5% (Valor em Risco Extremo)'), 1, 0, 'L')
-        pdf.cell(80, 6, clean_txt(f"R$ {var_5:,.2f}"), 1, 1, 'R')
-        pdf.cell(100, 6, clean_txt('CVaR 5% (Perda Media nos 5% Piores Casos)'), 1, 0, 'L')
-        pdf.cell(80, 6, clean_txt(f"R$ {cvar_5:,.2f}"), 1, 1, 'R')
-        pdf.cell(100, 6, clean_txt('Pior Cenario Simulado'), 1, 0, 'L')
-        pdf.cell(80, 6, clean_txt(f"R$ {pior_cenario:,.2f}"), 1, 1, 'R')
-        pdf.cell(100, 6, clean_txt('Melhor Cenario Simulado'), 1, 0, 'L')
-        pdf.cell(80, 6, clean_txt(f"R$ {melhor_cenario:,.2f}"), 1, 1, 'R')
-        pdf.ln(6)
+fig_hist.add_vline(x=q1, line_width=2, line_dash="dash", line_color="#ff1744", annotation_text="Q1 (25%)", annotation_position="top left")
+fig_hist.add_vline(x=q2, line_width=2.5, line_color="#00ff87", annotation_text="Mediana (50%)", annotation_position="top left")
+fig_hist.add_vline(x=q3, line_width=2, line_dash="dash", line_color="#ffd600", annotation_text="Q3 (75%)", annotation_position="top left")
 
-        # Percentis finais
-        pdf.set_font('Arial', 'B', 9)
-        pdf.set_fill_color(226, 232, 240)
-        pdf.cell(100, 7, clean_txt('Estatistica da Distribuicao Final'), 1, 0, 'L', fill=True)
-        pdf.cell(80, 7, clean_txt('Valor Projetado'), 1, 1, 'R', fill=True)
-        
-        pdf.set_font('Arial', '', 9)
-        pdf.cell(100, 6, clean_txt('Minimo'), 1, 0, 'L')
-        pdf.cell(80, 6, clean_txt(f"R$ {valores_finais.min():,.2f}"), 1, 1, 'R')
-        pdf.cell(100, 6, clean_txt('Q1 (25%)'), 1, 0, 'L')
-        pdf.cell(80, 6, clean_txt(f"R$ {q1:,.2f}"), 1, 1, 'R')
-        pdf.cell(100, 6, clean_txt('Mediana (50%)'), 1, 0, 'L')
-        pdf.cell(80, 6, clean_txt(f"R$ {q2:,.2f}"), 1, 1, 'R')
-        pdf.cell(100, 6, clean_txt('Q3 (75%)'), 1, 0, 'L')
-        pdf.cell(80, 6, clean_txt(f"R$ {q3:,.2f}"), 1, 1, 'R')
-        pdf.cell(100, 6, clean_txt('Maximo'), 1, 0, 'L')
-        pdf.cell(80, 6, clean_txt(f"R$ {valores_finais.max():,.2f}"), 1, 1, 'R')
-        pdf.cell(100, 6, clean_txt('Desvio Padrao'), 1, 0, 'L')
-        pdf.cell(80, 6, clean_txt(f"R$ {valores_finais.std():,.2f}"), 1, 1, 'R')
-        pdf.ln(10)
+apply_plotly_theme(fig_hist)
+st.plotly_chart(fig_hist, use_container_width=True)
 
-        # Imagens
-        pdf.add_page()
-        pdf.set_font('Arial', 'B', 12)
-        pdf.cell(0, 10, clean_txt('Graficos de Projecao Estocastica (Monte Carlo)'), 0, 1, 'L')
-        pdf.ln(5)
-        pdf.image(path_ind, x=15, y=pdf.get_y(), w=180)
-        pdf.ln(70)
-        pdf.image(path_fan, x=15, y=pdf.get_y(), w=180)
+# Estatísticas da distribuição final
+estatisticas = {
+    "Mínimo": valores_finais.min(),
+    "Q1 (25%)": q1,
+    "Mediana (50%)": q2,
+    "Q3 (75%)": q3,
+    "Máximo": valores_finais.max(),
+    "Média": valores_finais.mean(),
+    "Desvio Padrão": valores_finais.std()
+}
+estatisticas_dict = {
+    "Mínimo": f"R$ {estatisticas['Mínimo']:,.2f}",
+    "Q1 (25%)": f"R$ {estatisticas['Q1 (25%)']:,.2f}",
+    "Mediana (50%)": f"R$ {estatisticas['Mediana (50%)']:,.2f}",
+    "Q3 (75%)": f"R$ {estatisticas['Q3 (75%)']:,.2f}",
+    "Máximo": f"R$ {estatisticas['Máximo']:,.2f}",
+    "Média": f"R$ {estatisticas['Média']:,.2f}",
+    "Desvio Padrão": f"R$ {estatisticas['Desvio Padrão']:,.2f}"
+}
+section_header(ICO_METRICS, "Estatísticas da Distribuição Final", "h3")
+render_cards_grid(estatisticas_dict)
+loading_placeholder.empty()
 
-        pdf.add_page()
-        pdf.set_font('Arial', 'B', 12)
-        pdf.cell(0, 10, clean_txt('Graficos de Projecao Estocastica (Monte Carlo) - Continuacao'), 0, 1, 'L')
-        pdf.ln(5)
-        pdf.image(path_hist, x=15, y=pdf.get_y(), w=180)
-        pdf.ln(70)
+# Salvar estatísticas da simulação em session_state para uso no relatório
+st.session_state["simulation_run"] = True
+st.session_state["sim_n_simulations"] = n_simulations
+st.session_state["sim_valor_inicial"] = valor_inicial
+st.session_state["sim_years"] = years
+st.session_state["sim_valor_esperado"] = valor_esperado
+st.session_state["sim_var_5"] = var_5
+st.session_state["sim_cvar_5"] = cvar_5
+st.session_state["sim_pior_cenario"] = pior_cenario
+st.session_state["sim_melhor_cenario"] = melhor_cenario
+st.session_state["sim_estatisticas"] = estatisticas
 
-        # Limpeza
-        for p in [path_ind, path_fan, path_hist]:
-            try:
-                os.remove(p)
-            except Exception:
-                pass
-    except Exception as sim_err:
-        pdf.add_page()
-        draw_section_header(pdf, '5. PROJECAO E RISCO ESTOCASTICO (MONTE CARLO)')
-        pdf.set_font('Arial', 'I', 9)
-        pdf.cell(0, 10, clean_txt(f"Nao foi possivel gerar a projecao Monte Carlo: {str(sim_err)}"), 0, 1)
 
-    # ─── SECÇÃO 6: DRAWDOWN POR ATIVO ───
-    pdf.add_page()
-    draw_section_header(pdf, '6. ANALISE DE DRAWDOWN POR ATIVO (QUEDAS MAXIMAS)')
-    try:
-        pdf.set_font('Arial', 'B', 9)
-        pdf.set_fill_color(226, 232, 240)
-        pdf.cell(60, 7, clean_txt('Ticker'), 1, 0, 'C', fill=True)
-        pdf.cell(120, 7, clean_txt('Queda Maxima Historica (Drawdown)'), 1, 1, 'R', fill=True)
-        
-        pdf.set_font('Arial', '', 9)
-        for ticker in sorted(pesos_dict.keys()):
-            asset_returns = returns[ticker]
-            cum_rets = (1 + asset_returns).cumprod()
-            peaks = cum_rets.cummax()
-            dds = (cum_rets - peaks) / peaks
-            max_dd_asset = dds.min() * 100
-            
-            ticker_clean = ticker.replace('.SA', '')
-            pdf.cell(60, 6, clean_txt(ticker_clean), 1, 0, 'C')
-            pdf.cell(120, 6, clean_txt(f"{max_dd_asset:.2f}%"), 1, 1, 'R')
-    except Exception as dd_err:
-        pdf.set_font('Arial', 'I', 9)
-        pdf.cell(0, 6, clean_txt(f"Erro ao calcular drawdowns: {str(dd_err)}"), 0, 1)
 
-    # Cria arquivo PDF temporário
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
-        pdf_path = tmp_pdf.name
-    pdf.output(pdf_path)
 
-    with open(pdf_path, "rb") as f:
-        pdf_data = f.read()
-
-except Exception as gen_err:
-    st.error(f"Erro crítico durante a compilação do relatório PDF: {str(gen_err)}")
-    pdf_data = None
-finally:
-    # Remove tela de carregamento
-    loading_placeholder.empty()
-
-# Exibe o botão de download centralizado
-if pdf_data:
-    st.success("Relatório Executivo PDF gerado com sucesso!")
-    st.markdown("<br>", unsafe_allow_html=True)
-    col_centered = st.columns([1, 2, 1])[1]
-    with col_centered:
-        st.download_button(
-            label="📥 Baixar Relatório Completo (PDF)",
-            data=pdf_data,
-            file_name="relatorio_completo_portfolio.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
 
