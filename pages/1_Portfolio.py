@@ -816,17 +816,6 @@ if st.button("Carregar Portfolio", type="primary", use_container_width=True):
         section_header(ICO_METRICS, "Métricas Detalhadas do Portfólio", "h3")
         stats_dict = dict(zip(detailed_stats["Métrica"], detailed_stats["Valor"]))
         render_cards_grid(stats_dict)
-        # Retornos Anuais
-        
-        fig = qs.plots.yearly_returns(portfolio_returns, benchmark=retorno_bench, compounded=True, show=False)
-        ax = fig.gca() if hasattr(fig, 'gca') else fig.axes[0]
-        
-        # Alterar legenda
-        ax.legend(['Portfólio', 'IBOVESPA'])  # renomeia
-        ax.set_title('Retornos Anuais (Portfólio vs IBOVESPA)')
-        
-        apply_matplotlib_theme(fig)
-        st.pyplot(fig)
             
         
         
