@@ -808,7 +808,7 @@ if tickers:
 
                     # ── Scorecard de valuation ────────────────────────────────
                     st.markdown("#### Scorecard de Valuation do Setor")
-                    score_cols = st.columns(len(selected_in_peers)) if len(selected_in_peers) > 1 else [st]
+                    score_cols = st.columns(len(selected_in_peers))
 
                     for i, ticker_s in enumerate(selected_in_peers):
                         sub = rank_df[rank_df["Ação"] == ticker_s]
@@ -822,7 +822,7 @@ if tickers:
                         sc = "#00ff87" if total_score >= 60 else "#ffd600" if total_score >= 40 else "#ff3d5a"
                         label = "ATRATIVO" if total_score >= 60 else "NEUTRO" if total_score >= 40 else "CARO/FRACO"
 
-                        with score_cols[i] if len(selected_in_peers) > 1 else score_cols[0]:
+                        with score_cols[i]:
                             st.markdown(f"""
 <div style="background:linear-gradient(135deg,#0e1b2f,#080c14);border:2px solid {sc};
             border-radius:14px;padding:1.2rem;text-align:center;
@@ -867,6 +867,13 @@ if tickers:
             # Buscar notícias de portais brasileiros via Google News RSS
             company_news[ticker_name] = get_brazilian_news(ticker_name, empresa_name)
 
+
+        df_desc = pd.DataFrame(descriptions, index=tickers, columns=["Descrição"])
+        section_header(ICO_INFO, "Descrição da Empresa", "h3")
+        st.table(df_desc)
+
+        # ── Notícias das Empresas ─────────────────────────────────────────────
+        st.markdown("---")
         section_header(ICO_NEWS, "Notícias Recentes", "h3")
         
         if len(tickers) > 1:
