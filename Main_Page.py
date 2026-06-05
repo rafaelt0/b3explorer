@@ -859,12 +859,7 @@ if tickers:
 
             # Buscar notícias de portais brasileiros via Google News RSS
             company_news[ticker_name] = get_brazilian_news(ticker_name, empresa_name)
-
-
-        df_desc = pd.DataFrame(descriptions, index=tickers, columns=["Descrição"])
-        section_header(ICO_INFO, "Descrição da Empresa", "h3")
-        st.table(df_desc)
-        
+            
         section_header(ICO_NEWS, "Notícias Recentes", "h3")
         
         if len(tickers) > 1:
