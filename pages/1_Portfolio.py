@@ -789,30 +789,7 @@ if st.button("Carregar Portfolio", type="primary", use_container_width=True):
 
         st.markdown("---")
 
-        # Distribuição de retornos com estatísticas
-
-        st.subheader("Distribuição dos Retornos Diários (%) e Estatísticas")
-        fig_hist, ax_hist = plt.subplots(figsize=(10, 5))
-        sns.histplot(portfolio_returns * 100, bins=50, kde=True, color='#00ff87', edgecolor='#080c14', alpha=0.65, ax=ax_hist)
-        ax_hist.set_xlabel("Retornos Diários (%)")
-        ax_hist.set_ylabel("Frequência")
-        
-        media = portfolio_returns.mean() * 100
-        desvio = portfolio_returns.std() * 100
-        curtose_val = kurtosis(portfolio_returns, fisher=True)
-        assimetria_val = skew(portfolio_returns)
-        
-        stats_text = (f"Média: {media:.4f}%\n"
-                      f"Desvio Padrão: {desvio:.4f}%\n"
-                      f"Curtose (Fisher): {curtose_val:.4f}\n"
-                      f"Assimetria: {assimetria_val:.4f}")
-        
-        props = dict(boxstyle='round', facecolor='#0e1524', edgecolor='#1e293b', alpha=0.95)
-        ax_hist.text(0.95, 0.95, stats_text, transform=ax_hist.transAxes,
-                     fontsize=10, color='#f8fafc', verticalalignment='top', horizontalalignment='right', bbox=props)
-        ax_hist.grid(True, color='#1e293b', linestyle=':', alpha=0.5)
-        apply_matplotlib_theme(fig_hist)
-        st.pyplot(fig_hist)
+    
         
         # Métricas Consolidadas
         detailed_stats = pd.DataFrame({
