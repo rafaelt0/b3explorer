@@ -323,10 +323,64 @@ if tickers:
         # 3. Limpar tela de carregamento
         loading_placeholder.empty()
 
-        section_header(ICO_SECTOR, "Setor", "h3")
-        st.write(df[['Empresa', 'Setor', 'Subsetor']].drop_duplicates(keep='last'))
+        def render_sector_cards(ticker_name, row):
+            cols = st.columns(3)
+            emp = row["Empresa"]
+            setor = row["Setor"]
+            sub = row["Subsetor"]
+            
+            metrics = [
+                ("Empresa", emp, "#38bdf8"),
+                ("Setor", setor, "#4ade80"),
+                ("Subsetor", sub, "#fbbf24")
+            ]
+            
+            for col, (label, val_str, color) in zip(cols, metrics):
+                with col:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #0e1726, #070c14); 
+                                border: 1px solid #1e293b; 
+                                border-radius: 10px; 
+                                padding: 0.8rem; 
+                                text-align: center; 
+                                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                                margin-bottom: 0.5rem;
+                                min-height: 90px;
+                                display: flex;
+                                flex-direction: column;
+                                justify-content: center;
+                                align-items: center;">
+                        <div style="font-size: 0.75rem; color: #94a3b8; font-weight: 600; text-transform: uppercase; margin-bottom: 0.3rem; letter-spacing: 0.05em;">{label}</div>
+                        <div style="font-size: 1.1rem; color: {color}; font-weight: 800;">{val_str}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-        # Dataframe estatísticas básicas
+        section_header(ICO_SECTOR, "Setor", "h3")
+        df_sector = df[['Empresa', 'Setor', 'Subsetor']]
+        
+        if len(tickers) > 1:
+            tabs_sector = st.tabs(tickers)
+            for tab, ticker in zip(tabs_sector, tickers):
+                with tab:
+                    if ticker in df_sector.index:
+                        row_s = df_sector.loc[ticker]
+                        if isinstance(row_s, pd.DataFrame):
+                            row_s = row_s.iloc[-1]
+                        render_sector_cards(ticker, row_s)
+                    else:
+                        st.warning(f"Sem dados de setor para {ticker}")
+        else:
+            ticker = tickers[0]
+            if ticker in df_sector.index:
+                row_s = df_sector.loc[ticker]
+                if isinstance(row_s, pd.DataFrame):
+                    row_s = row_s.iloc[-1]
+                render_sector_cards(ticker, row_s)
+            else:
+                st.warning(f"Sem dados de setor para {ticker}")
+
+
+        # Informações de mercado em caixas estilizadas
         section_header(ICO_MARKET, "Informações de Mercado", "h3")
         df_price = df[['Cotacao', 'Min_52_sem', 'Max_52_sem', 'Vol_med_2m', 
                        'Valor_de_mercado', 'Data_ult_cot']]
@@ -338,15 +392,78 @@ if tickers:
                     "Volume Médio (2 meses)", "Valor de Mercado"]:
             df_price[col] = clean_numeric_column(df_price[col]).fillna(0)
 
-        format_dict = {
-            "Cotação": "R$ {:,.2f}",
-            "Mínimo (52 semanas)": "R$ {:,.2f}",
-            "Máximo (52 semanas)": "R$ {:,.2f}",
-            "Volume Médio (2 meses)": "{:,.0f}",
-            "Valor de Mercado": "R$ {:,.0f}"
-        }
+        def format_large_br_currency(value):
+            if value >= 1e9:
+                return f"R$ {value / 1e9:,.2f} B"
+            elif value >= 1e6:
+                return f"R$ {value / 1e6:,.2f} M"
+            else:
+                return f"R$ {value:,.2f}"
 
-        st.dataframe(df_price.style.format(format_dict), use_container_width=True)
+        def format_large_number(value):
+            if value >= 1e9:
+                return f"{value / 1e9:,.2f} B"
+            elif value >= 1e6:
+                return f"{value / 1e6:,.2f} M"
+            elif value >= 1e3:
+                return f"{value / 1e3:,.1f} K"
+            else:
+                return f"{value:,.0f}"
+
+        def render_price_cards(ticker_name, row):
+            cols = st.columns(5)
+            cot = row["Cotação"]
+            min_52 = row["Mínimo (52 semanas)"]
+            max_52 = row["Máximo (52 semanas)"]
+            vol = row["Volume Médio (2 meses)"]
+            val_merc = row["Valor de Mercado"]
+            data_ult = row["Data Última Cotação"]
+            
+            metrics = [
+                ("Cotação", f"R$ {cot:,.2f}", "#38bdf8"),
+                ("Mínimo (52s)", f"R$ {min_52:,.2f}", "#f87171"),
+                ("Máximo (52s)", f"R$ {max_52:,.2f}", "#4ade80"),
+                ("Volume Médio", format_large_number(vol), "#fb7185"),
+                ("Valor de Mercado", format_large_br_currency(val_merc), "#fbbf24")
+            ]
+            
+            for col, (label, val_str, color) in zip(cols, metrics):
+                with col:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #0e1726, #070c14); 
+                                border: 1px solid #1e293b; 
+                                border-radius: 10px; 
+                                padding: 0.8rem; 
+                                text-align: center; 
+                                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                                margin-bottom: 0.5rem;">
+                        <div style="font-size: 0.75rem; color: #94a3b8; font-weight: 600; text-transform: uppercase; margin-bottom: 0.3rem; letter-spacing: 0.05em;">{label}</div>
+                        <div style="font-size: 1.15rem; color: {color}; font-weight: 800; font-family: 'JetBrains Mono', monospace;">{val_str}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            st.caption(f"Última cotação registrada: {data_ult} para {ticker_name}")
+
+        if len(tickers) > 1:
+            tabs_price = st.tabs(tickers)
+            for tab, ticker in zip(tabs_price, tickers):
+                with tab:
+                    if ticker in df_price.index:
+                        row_p = df_price.loc[ticker]
+                        if isinstance(row_p, pd.DataFrame):
+                            row_p = row_p.iloc[-1]
+                        render_price_cards(ticker, row_p)
+                    else:
+                        st.warning(f"Sem dados de mercado para {ticker}")
+        else:
+            ticker = tickers[0]
+            if ticker in df_price.index:
+                row_p = df_price.loc[ticker]
+                if isinstance(row_p, pd.DataFrame):
+                    row_p = row_p.iloc[-1]
+                render_price_cards(ticker, row_p)
+            else:
+                st.warning(f"Sem dados de mercado para {ticker}")
+
 
         # Indicadores Fundamentalistas
         section_header(ICO_METRICS, "Indicadores Financeiros", "h3")
@@ -844,8 +961,7 @@ if tickers:
 
         st.markdown("---")
 
-        # Descrições e Notícias B3
-        descriptions = []
+        # Notícias B3
         company_news = {}
         for t in tickers_yf:
             ticker_name = t.replace(".SA", "")
@@ -859,7 +975,9 @@ if tickers:
 
             # Buscar notícias de portais brasileiros via Google News RSS
             company_news[ticker_name] = get_brazilian_news(ticker_name, empresa_name)
-            
+
+        # ── Notícias das Empresas ─────────────────────────────────────────────
+        st.markdown("---")
         section_header(ICO_NEWS, "Notícias Recentes", "h3")
         
         if len(tickers) > 1:
