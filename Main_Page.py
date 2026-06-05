@@ -867,8 +867,6 @@ if tickers:
             # Buscar notícias de portais brasileiros via Google News RSS
             company_news[ticker_name] = get_brazilian_news(ticker_name, empresa_name)
 
-        # ── Notícias das Empresas ─────────────────────────────────────────────
-        st.markdown("---")
         section_header(ICO_NEWS, "Notícias Recentes", "h3")
         
         if len(tickers) > 1:
