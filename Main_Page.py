@@ -326,77 +326,75 @@ if tickers:
 
         df_ind = df_ind.fillna(0)
 
-        format_ind = {
-            "Margem Líquida": "{:.2f}%",
-            "Margem EBIT": "{:.2f}%",
-            "ROE": "{:.2f}%",
-            "ROIC": "{:.2f}%",
-            "Dividend Yield": "{:.2f}%",
-            "Crescimento Receita 5 anos": "{:.2f}%",
-            "P/L": "{:.2f}",
-            "EV/EBITDA": "{:.2f}",
-            "P/VP": "{:.2f}",
-            "Empresa": lambda x: x
-        }
-        
-        # Filtro de indicadores
-        st.markdown("""
-<h4 style="display:flex;align-items:center;gap:6px;margin-bottom:.4rem">
-  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00d2ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <circle cx="11" cy="11" r="8"></circle>
-    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-  </svg>
-  <span>Filtros</span>
-</h4>
+        # Remove duplicate indices if any
+        df_ind = df_ind[~df_ind.index.duplicated(keep='last')]
+
+        # Função auxiliar para renderizar os cards em colunas estilizadas
+        def render_ticker_cards(row):
+            # 1. Valuation Section
+            st.markdown("""
+<div style="margin: 1.2rem 0 0.6rem 0; display: flex; align-items: center; gap: 6px;">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00d2ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="1" x2="12" y2="23"></line>
+        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+    </svg>
+    <span style="font-weight: 700; color: #00d2ff; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em;">Valuation</span>
+</div>
 """, unsafe_allow_html=True)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("P/L", f"{row['P/L']:.2f}")
+            with c2:
+                st.metric("P/VP", f"{row['P/VP']:.2f}")
+            with c3:
+                st.metric("EV/EBITDA", f"{row['EV/EBITDA']:.2f}")
 
-        # Organização das colunas
-        col1, col2 = st.columns(2)
+            # 2. Rentabilidade Section
+            st.markdown("""
+<div style="margin: 1.5rem 0 0.6rem 0; display: flex; align-items: center; gap: 6px;">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00ff87" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
+        <polyline points="17 6 23 6 23 12"></polyline>
+    </svg>
+    <span style="font-weight: 700; color: #00ff87; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em;">Rentabilidade</span>
+</div>
+""", unsafe_allow_html=True)
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.metric("ROE", f"{row['ROE']:.2f}%")
+            with c2:
+                st.metric("ROIC", f"{row['ROIC']:.2f}%")
+            with c3:
+                st.metric("Margem Líquida", f"{row['Margem Líquida']:.2f}%")
+            with c4:
+                st.metric("Margem EBIT", f"{row['Margem EBIT']:.2f}%")
 
-        with col1:
-            min_ebit = st.number_input("Margem EBIT mínima (%)", value=0.0, step=0.1)
-            min_roe = st.number_input("ROE mínimo (%)", value=0.0, step=0.1)
-            min_margem_liq = st.number_input("Margem Líquida Mínima (%)", value=0.0, step=0.1)
-            min_cresc_5a = st.number_input("Crescimento Receita 5 Anos Mínima (%)", value=0.0, step=0.1)
-            
-        with col2:
-            min_dividend = st.number_input("Dividend Yield mínimo (%)", value=0.0, step=0.1)
-            max_pl = st.number_input("P/L máximo", value=1000.0, step=0.1)
-            min_roic = st.number_input("ROIC mínimo (%)", value=0.0, step=0.1)
-            max_ev_ebitda = st.number_input("EV/EBITDA Máximo", value=1000.0, step=0.1)
-            max_pvp = st.number_input("P/VP máximo", value=1000.0, step=0.1)
-            
+            # 3. Crescimento & Yield Section
+            st.markdown("""
+<div style="margin: 1.5rem 0 0.6rem 0; display: flex; align-items: center; gap: 6px;">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffd600" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+    </svg>
+    <span style="font-weight: 700; color: #ffd600; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em;">Crescimento & Yield</span>
+</div>
+""", unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                st.metric("Dividend Yield", f"{row['Dividend Yield']:.2f}%")
+            with c2:
+                st.metric("Crescimento Receita (5 anos)", f"{row['Crescimento Receita 5 anos']:.2f}%")
 
-        # Formatação Condicional
-        def highlight_val(val, min_val=None, max_val=None):
-            if pd.isna(val):
-                return ''
-            if min_val is not None and val < min_val:
-                return 'background-color: rgba(255, 23, 68, 0.15); color: #ff1744;'  # vermelho neon translúcido
-            if max_val is not None and val > max_val:
-                return 'background-color: rgba(255, 23, 68, 0.15); color: #ff1744;'
-            return 'background-color: rgba(0, 230, 118, 0.15); color: #00ff87;'  # verde neon translúcido
-
-        # Define as cores
-        def style_indicators(row):
-            styles = [''] * len(row)
-            col_idx = {col: i for i, col in enumerate(row.index)}
-
-            styles[col_idx['Margem EBIT']] = highlight_val(row['Margem EBIT'], min_val=min_ebit)
-            styles[col_idx['ROE']] = highlight_val(row['ROE'], min_val=min_roe)
-            styles[col_idx['Margem Líquida']] = highlight_val(row['Margem Líquida'], min_val=min_margem_liq)
-            styles[col_idx['Crescimento Receita 5 anos']] = highlight_val(row['Crescimento Receita 5 anos'], min_val=min_cresc_5a)
-            styles[col_idx['Dividend Yield']] = highlight_val(row['Dividend Yield'], min_val=min_dividend)
-            styles[col_idx['EV/EBITDA']] = highlight_val(row['EV/EBITDA'], max_val=max_ev_ebitda)
-            styles[col_idx['P/L']] = highlight_val(row['P/L'], max_val=max_pl)
-            styles[col_idx['ROIC']] = highlight_val(row['ROIC'], min_val=min_roic)
-            styles[col_idx['P/VP']] = highlight_val(row['P/VP'], max_val=max_pvp)
-            
-
-            return styles
-
-        styled_ind = df_ind.style.format(format_ind).apply(style_indicators, axis=1)
-        st.dataframe(styled_ind, use_container_width=True)
+        # Exibição dos cards
+        if len(tickers) > 1:
+            tabs_tickers = st.tabs(tickers)
+            for idx, ticker in enumerate(tickers):
+                with tabs_tickers[idx]:
+                    if ticker in df_ind.index:
+                        render_ticker_cards(df_ind.loc[ticker])
+        else:
+            ticker = tickers[0]
+            if ticker in df_ind.index:
+                render_ticker_cards(df_ind.loc[ticker])
 
         # ── Comparação Visual de Múltiplos ───────────────────────────────────
         if len(tickers) > 1:
