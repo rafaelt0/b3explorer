@@ -59,8 +59,9 @@ pesos_manuais = st.session_state["pesos_manuais"]
 peso_manual_df = st.session_state["peso_manual_df"]
 portfolio_returns = st.session_state["portfolio_returns"]
 retorno_bench = st.session_state["retorno_bench"]
-portfolio_value = st.session_state.get("portfolio_value")
 valor_inicial = st.session_state.get("valor_investido", 10000.0)
+cum_return = (1 + portfolio_returns).cumprod()
+portfolio_value = cum_return * valor_inicial
 taxa_selic = st.session_state.get("taxa_selic", 0.1075)
 
 if taxa_selic > 1.0:
