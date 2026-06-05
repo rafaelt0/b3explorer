@@ -246,36 +246,22 @@ tickers = st.multiselect('Escolha sua ação. Selecione a página desejada e as 
 # Só executa análise se houver pelo menos uma ação selecionada
 if tickers:
     try:
-        # 1. Configurações da barra lateral (movidas para o início para permitir o download conjunto)
-        data_inicio = st.sidebar.date_input("Data Inicial", datetime.date(2025,1,1),
-                                            min_value=datetime.date(2000,1,1),
-                                            max_value=datetime.date.today())
-        st.sidebar.header('Configurações')
-        interval_selected = st.sidebar.selectbox('Intervalo', 
-                                                 ['1d','1wk','1mo','3mo','6mo','1y'])
-
-        # 2. Exibir tela de carregamento glassmorphic
+        # 1. Exibir tela de carregamento glassmorphic
         loading_placeholder = st.empty()
         with loading_placeholder.container():
             st.markdown("""
             <div class="loading-container">
                 <div class="loading-spinner"></div>
-                <div class="loading-text">Buscando cotações e indicadores fundamentalistas na B3...</div>
+                <div class="loading-text">Buscando indicadores fundamentalistas na B3...</div>
             </div>
             """, unsafe_allow_html=True)
 
-        # 3. Buscar dados usando funções cacheadas
+        # 2. Buscar dados usando funções cacheadas
         df = get_fundamentus_data(tickers)
 
         tickers_yf = [t + ".SA" for t in tickers]
-        data_prices = get_yfinance_data(tickers_yf, data_inicio, interval_selected)
 
-        # Se for Series (ticker único), converte para DataFrame e renomeia a coluna para o ticker
-        if isinstance(data_prices, pd.Series):
-            data_prices = data_prices.to_frame(name=tickers[0])
-            data_prices.index = pd.to_datetime(data_prices.index)
-
-        # 4. Limpar tela de carregamento
+        # 3. Limpar tela de carregamento
         loading_placeholder.empty()
 
         section_header(ICO_SECTOR, "Setor", "h3")
@@ -798,23 +784,6 @@ if tickers:
                     st.info("Nenhum ticker selecionado encontrado nos dados de peers do setor.")
 
         st.markdown("---")
-
-        # Os dados de cotação (data_prices) já foram baixados e processados no início do bloco
-
-        
-        section_header(ICO_CHART, "Cotação Histórica", "h3")
-        st.write(data_prices)
-        fig, ax = plt.subplots(figsize=(10, 5))
-        # Custom palette with vibrant tones
-        palette = sns.color_palette("muted", len(data_prices.columns)) if len(data_prices.columns) > 1 else ['#00d2ff']
-        sns.lineplot(data=data_prices, ax=ax, palette=palette, linewidth=2)
-        ax.set_xlabel("Período")
-        ax.set_ylabel("Cotação (R$)")
-        ax.set_title("Cotação do(s) Ativo(s)", fontsize=14, fontweight='bold', pad=15)
-        ax.grid(True, color='#1e293b', linestyle=':', alpha=0.6)
-        st.pyplot(fig)
-
-        returns = data_prices.pct_change()
 
         # Descrições yfinance
         descriptions = []
