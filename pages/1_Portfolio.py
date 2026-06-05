@@ -521,16 +521,16 @@ if st.button("Carregar Portfolio", type="primary", use_container_width=True):
         alloc_df = peso_manual_df.reset_index()
         alloc_df.columns = ["Ativo", "Peso"]
         
-        fig_treemap = px.treemap(
+        fig_donut = px.pie(
             alloc_df,
-            path=['Ativo'],
+            names='Ativo',
             values='Peso',
-            color='Peso',
-            color_continuous_scale='GnBu',
-            title="Alocação do Portfólio (Treemap)"
+            hole=0.4,
+            title="Distribuição de Alocação da Carteira",
+            color_discrete_sequence=px.colors.qualitative.Safe
         )
-        apply_plotly_theme(fig_treemap)
-        st.plotly_chart(fig_treemap, use_container_width=True)
+        apply_plotly_theme(fig_donut)
+        st.plotly_chart(fig_donut, use_container_width=True)
         
         if "Markowitz" in modo:
             section_header(ICO_FRONTIER, "Gráfico da Fronteira Eficiente", "h3")
@@ -795,21 +795,34 @@ if st.button("Carregar Portfolio", type="primary", use_container_width=True):
             
         
         
-        st.subheader("Drawdown do Portfólio")
-        # Drawdown
-        st.subheader("Análise de Drawdown por Ativo")
+        section_header(ICO_RISK, "Análise de Drawdown", "h3")
         
-        # Função para calcular drawdown
+        # 1. Gráfico de Drawdown do Portfólio
+        cum_returns = (1 + portfolio_returns).cumprod()
+        rolling_max = cum_returns.cummax()
+        drawdown = (cum_returns - rolling_max) / rolling_max
+            
+        fig1, ax1 = plt.subplots(figsize=(10, 4.5))
+        ax1.fill_between(drawdown.index, drawdown.values, 0, color='#ff1744', alpha=0.35)
+        ax1.plot(drawdown.index, drawdown.values, color='#ff1744', linewidth=1.5)
+        ax1.set_title("Evolução do Drawdown do Portfólio", fontsize=12, fontweight='bold', pad=10)
+        ax1.set_ylabel("Drawdown")
+        ax1.set_xlabel("Data")
+        ax1.grid(True, color='#1e293b', linestyle=':', alpha=0.5)
+        ax1.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+        apply_matplotlib_theme(fig1)
+        st.pyplot(fig1)
+        
+        # 2. Tabela de Drawdown por Ativo
+        st.subheader("Máximo Drawdown por Ativo Individual")
+        
         def calcular_drawdown(series):
-            cum_returns = (1 + series).cumprod()
-            rolling_max = cum_returns.cummax()
-            drawdown = (cum_returns - rolling_max) / rolling_max
-            return drawdown
+            cum_returns_act = (1 + series).cumprod()
+            rolling_max_act = cum_returns_act.cummax()
+            drawdown_act = (cum_returns_act - rolling_max_act) / rolling_max_act
+            return drawdown_act
         
-        # Calcula drawdown para cada ativo
         drawdowns_ativos = returns.apply(calcular_drawdown)
-        
-        # Calcula máximo drawdown e a data que ocorreu para cada ativo
         max_drawdowns = drawdowns_ativos.min()
         data_max_drawdowns = drawdowns_ativos.idxmin()
         
@@ -818,29 +831,12 @@ if st.button("Carregar Portfolio", type="primary", use_container_width=True):
             'Data do Máximo Drawdown': data_max_drawdowns
         }).sort_values(by='Máximo Drawdown (%)')
         
-        # Ajusta índice para mostrar ticker sem ".SA"
         df_drawdowns.index = df_drawdowns.index.str.replace(".SA", "", regex=False)
         
         st.dataframe(df_drawdowns.style.format({
             'Máximo Drawdown (%)': '{:.2f}%',
             'Data do Máximo Drawdown': lambda x: x.strftime('%Y-%m-%d')
-        }))
-        
-        cum_returns = (1 + portfolio_returns).cumprod()
-        rolling_max = cum_returns.cummax()
-        drawdown = (cum_returns - rolling_max) / rolling_max
-            
-        # Plot Drawdown
-        fig1, ax1 = plt.subplots(figsize=(10, 4.5))
-        ax1.fill_between(drawdown.index, drawdown.values, 0, color='#ff1744', alpha=0.35)
-        ax1.plot(drawdown.index, drawdown.values, color='#ff1744', linewidth=1.5)
-        ax1.set_title("Drawdown do Portfólio", fontsize=12, fontweight='bold', pad=10)
-        ax1.set_ylabel("Drawdown")
-        ax1.set_xlabel("Data")
-        ax1.grid(True, color='#1e293b', linestyle=':', alpha=0.5)
-        ax1.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
-        apply_matplotlib_theme(fig1)
-        st.pyplot(fig1)
+        }), use_container_width=True)
             
         # Rolling Beta (60 dias)
         window = 60
@@ -921,6 +917,15 @@ if st.button("Carregar Portfolio", type="primary", use_container_width=True):
         st.session_state["portfolio_returns"] = portfolio_returns
         st.session_state["retorno_bench"] = retorno_bench
         st.session_state["lookback"] = lookback_opcao
+        st.session_state["total_return"] = total_return
+        st.session_state["vol_anual"] = vol_anual
+        st.session_state["sharpe_val"] = sharpe_val
+        st.session_state["sortino_val"] = sortino_val
+        st.session_state["max_dd"] = max_dd
+        st.session_state["beta"] = beta
+        st.session_state["alfa_val"] = alfa_val
+        st.session_state["r_quadrado"] = r_quadrado
+        st.session_state["information_ratio"] = information_ratio
         
         # Garante que pesos manuais ficam disponíveis como dicionário
         if "Manual" in modo:
