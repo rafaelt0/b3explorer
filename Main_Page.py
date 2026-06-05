@@ -155,6 +155,11 @@ ICO_RADAR   = _svg('<polygon points="12 2 22 8.5 22 19.5 12 22 2 19.5 2 8.5" str
 ICO_INFO    = _svg('<circle cx="12" cy="12" r="10" stroke="#00d2ff" stroke-width="1.8"/>'
                    '<line x1="12" y1="16" x2="12" y2="12" stroke="#00d2ff" stroke-width="2" stroke-linecap="round"/>'
                    '<line x1="12" y1="8" x2="12" y2="8.01" stroke="#00d2ff" stroke-width="2" stroke-linecap="round"/>', 16)
+ICO_NEWS    = _svg('<rect x="3" y="4" width="18" height="16" rx="2" stroke="#00ff87" stroke-width="1.8"/>'
+                   '<line x1="7" y1="8" x2="17" y2="8" stroke="#00ff87" stroke-width="1.8" stroke-linecap="round"/>'
+                   '<line x1="7" y1="12" x2="13" y2="12" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round"/>'
+                   '<line x1="7" y1="16" x2="15" y2="16" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round"/>', 16)
+
 
 def section_header(icon_svg, text, tag="h3"):
     st.markdown(
@@ -785,18 +790,113 @@ if tickers:
 
         st.markdown("---")
 
-        # Descrições yfinance
+        # Descrições e Notícias yfinance
         descriptions = []
+        company_news = {}
         for t in tickers_yf:
+            ticker_name = t.replace(".SA", "")
             try:
-                info = yf.Ticker(t).get_info()
+                ticker_obj = yf.Ticker(t)
+                info = ticker_obj.get_info()
                 descriptions.append(info.get('longBusinessSummary', 'Não disponível'))
-            except:
+            except Exception as e:
                 descriptions.append('Não disponível')
+
+            # Buscar notícias do Yahoo Finance
+            try:
+                raw_news = ticker_obj.news
+                parsed_news = []
+                for item in raw_news:
+                    content = item.get('content', item)
+                    title = content.get('title', 'Sem Título')
+                    summary = content.get('summary', '')
+                    if not summary:
+                        summary = content.get('description', '')
+                    
+                    provider = ''
+                    if 'provider' in content:
+                        provider = content['provider'].get('displayName', '')
+                    if not provider:
+                        provider = item.get('publisher', '')
+                        
+                    link = ''
+                    if 'clickThroughUrl' in content:
+                        link = content['clickThroughUrl'].get('url', '')
+                    if not link and 'canonicalUrl' in content:
+                        link = content['canonicalUrl'].get('url', '')
+                    if not link:
+                        link = item.get('link', '')
+                        
+                    pub_date = content.get('pubDate', '')
+                    if not pub_date:
+                        pub_time = item.get('providerPublishTime', None)
+                        if pub_time:
+                            import datetime
+                            pub_date = datetime.datetime.fromtimestamp(pub_time).strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    # Formata data para exibição limpa (AAAA-MM-DD HH:MM)
+                    if pub_date and 'T' in pub_date:
+                        pub_date = pub_date.replace('T', ' ').replace('Z', '')[:16]
+
+                    parsed_news.append({
+                        'title': title,
+                        'summary': summary,
+                        'provider': provider,
+                        'link': link,
+                        'date': pub_date
+                    })
+                company_news[ticker_name] = parsed_news
+            except Exception as e:
+                company_news[ticker_name] = []
 
         df_desc = pd.DataFrame(descriptions, index=tickers, columns=["Descrição"])
         section_header(ICO_INFO, "Descrição da Empresa", "h3")
         st.table(df_desc)
+
+        # ── Notícias das Empresas ─────────────────────────────────────────────
+        st.markdown("---")
+        section_header(ICO_NEWS, "Notícias Recentes", "h3")
+        
+        if len(tickers) > 1:
+            tabs_news = st.tabs(tickers)
+            for idx, ticker in enumerate(tickers):
+                with tabs_news[idx]:
+                    news_items = company_news.get(ticker, [])
+                    if news_items:
+                        for item in news_items:
+                            st.markdown(f"""
+                            <div class="news-card">
+                                <div class="news-header">
+                                    <span class="news-provider">{item['provider']}</span>
+                                    <span class="news-date">{item['date']}</span>
+                                </div>
+                                <h4 class="news-title">
+                                    <a class="news-title-link" href="{item['link']}" target="_blank">{item['title']}</a>
+                                </h4>
+                                <p class="news-summary">{item['summary']}</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.caption("Nenhuma notícia recente disponível para esta empresa.")
+        else:
+            ticker = tickers[0]
+            news_items = company_news.get(ticker, [])
+            if news_items:
+                for item in news_items:
+                    st.markdown(f"""
+                    <div class="news-card">
+                        <div class="news-header">
+                            <span class="news-provider">{item['provider']}</span>
+                            <span class="news-date">{item['date']}</span>
+                        </div>
+                        <h4 class="news-title">
+                            <a class="news-title-link" href="{item['link']}" target="_blank">{item['title']}</a>
+                        </h4>
+                        <p class="news-summary">{item['summary']}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.caption("Nenhuma notícia recente disponível para esta empresa.")
 
     except OSError as e:
         st.cache_data.clear()
