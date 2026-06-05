@@ -857,13 +857,6 @@ if tickers:
                 else:
                     empresa_name = str(val)
 
-            try:
-                ticker_obj = yf.Ticker(t)
-                info = ticker_obj.get_info()
-                descriptions.append(info.get('longBusinessSummary', 'Não disponível'))
-            except Exception as e:
-                descriptions.append('Não disponível')
-
             # Buscar notícias de portais brasileiros via Google News RSS
             company_news[ticker_name] = get_brazilian_news(ticker_name, empresa_name)
 
@@ -871,9 +864,7 @@ if tickers:
         df_desc = pd.DataFrame(descriptions, index=tickers, columns=["Descrição"])
         section_header(ICO_INFO, "Descrição da Empresa", "h3")
         st.table(df_desc)
-
-        # ── Notícias das Empresas ─────────────────────────────────────────────
-        st.markdown("---")
+        
         section_header(ICO_NEWS, "Notícias Recentes", "h3")
         
         if len(tickers) > 1:
