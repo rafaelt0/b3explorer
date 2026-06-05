@@ -11,6 +11,7 @@ import seaborn as sns
 from fpdf import FPDF
 import fundamentus
 from quantstats.stats import max_drawdown, var, cvar
+from scipy.stats import skew, kurtosis
 
 # CSS customizado
 with open("style.css") as f:
@@ -60,14 +61,16 @@ peso_manual_df = st.session_state["peso_manual_df"]
 portfolio_returns = st.session_state["portfolio_returns"]
 retorno_bench = st.session_state["retorno_bench"]
 valor_inicial = st.session_state.get("valor_investido", 10000.0)
-cum_return = (1 + portfolio_returns).cumprod()
-portfolio_value = cum_return * valor_inicial
 taxa_selic = st.session_state.get("taxa_selic", 0.1075)
 
 if taxa_selic > 1.0:
     taxa_selic = taxa_selic / 100.0
 
 selic_diaria = taxa_selic / 252
+
+# Reconstroi portfolio_value
+cum_return = (1 + portfolio_returns).cumprod()
+portfolio_value = cum_return * valor_inicial
 
 # Converte datas
 portfolio_returns.index = pd.to_datetime(portfolio_returns.index, errors='coerce')
@@ -173,6 +176,9 @@ def get_weight_val(row):
             return row[col]
     return row.iloc[0]
 
+# List para rastrear caminhos de imagens temporárias para limpeza segura no bloco finally
+temp_images = []
+
 # Tela de carregamento enquanto o PDF e os gráficos são gerados
 loading_placeholder = st.empty()
 with loading_placeholder.container():
@@ -243,9 +249,12 @@ try:
     pdf.add_page()
     draw_section_header(pdf, '2. METRICAS DE PERFORMANCE E RISCO')
     
-    # Cálculos das métricas
-    total_ret = (portfolio_value.iloc[-1] / valor_inicial - 1) * 100
+    # Cálculos avançados e completos das métricas
+    dias_totais = (portfolio_value.index[-1] - portfolio_value.index[0]).days
+    ret_total = (portfolio_value.iloc[-1] / valor_inicial - 1) * 100
+    ret_anual = ((portfolio_value.iloc[-1] / valor_inicial) ** (365.25 / dias_totais) - 1) * 100 if dias_totais > 0 else 0.0
     vol_anual = portfolio_returns.std() * np.sqrt(252) * 100
+    
     excesso_ret = portfolio_returns - selic_diaria
     sharpe_anual = (excesso_ret.mean() / portfolio_returns.std()) * np.sqrt(252) if portfolio_returns.std() > 0 else 0.0
     sortino_anual = (excesso_ret.mean() / portfolio_returns[portfolio_returns < 0].std()) * np.sqrt(252) if portfolio_returns[portfolio_returns < 0].std() > 0 else 0.0
@@ -258,18 +267,33 @@ try:
     beta_val = cov_matrix[0, 1] / cov_matrix[1, 1] if cov_matrix[1, 1] > 0 else 1.0
     alfa_anual = (portfolio_returns.mean() - beta_val * retorno_bench.mean()) * 252 * 100
     r_quadrado_val = (cov_matrix[0, 1] ** 2) / (cov_matrix[0, 0] * cov_matrix[1, 1]) * 100 if (cov_matrix[0, 0] * cov_matrix[1, 1]) > 0 else 0.0
-    
+
+    # Adicionais avançados
+    win_rate = (portfolio_returns > 0).mean() * 100
+    skew_val = skew(portfolio_returns)
+    kurt_val = kurtosis(portfolio_returns)
+    q95 = np.percentile(portfolio_returns, 95)
+    q5 = np.percentile(portfolio_returns, 5)
+    tail_ratio_val = abs(q95 / q5) if q5 != 0 else 1.0
+    calmar_ratio = ret_anual / abs(max_dd_val) if max_dd_val != 0 else 0.0
+
     metrics_list = [
-        ("Retorno Total Acumulado", f"{total_ret:.2f}%"),
+        ("Retorno Total Acumulado", f"{ret_total:.2f}%"),
+        ("Retorno Anualizado (CAGR)", f"{ret_anual:.2f}%"),
         ("Volatilidade Anualizada", f"{vol_anual:.2f}%"),
         ("Indice Sharpe Anualizado", f"{sharpe_anual:.2f}"),
         ("Indice Sortino Anualizado", f"{sortino_anual:.2f}"),
+        ("Indice Calmar", f"{calmar_ratio:.2f}"),
         ("Maximo Drawdown", f"{max_dd_val:.2f}%"),
         ("Beta vs IBOVESPA", f"{beta_val:.4f}"),
         ("Alfa de Jensen Anualizado", f"{alfa_anual:.2f}%"),
         ("R-Quadrado (R2) vs IBOVESPA", f"{r_quadrado_val:.2f}%"),
         ("VaR Diario (95%)", f"{var_val:.2f}%"),
         ("CVaR Diario (95%)", f"{cvar_val:.2f}%"),
+        ("Taxa de Acerto (Win Rate)", f"{win_rate:.2f}%"),
+        ("Assimetria (Skewness)", f"{skew_val:.4f}"),
+        ("Curtose (Kurtosis)", f"{kurt_val:.4f}"),
+        ("Tail Ratio (95% / 5%)", f"{tail_ratio_val:.2f}"),
     ]
 
     pdf.set_font('Arial', 'B', 9)
@@ -422,6 +446,7 @@ try:
         fig_ind.tight_layout()
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f_ind:
             path_ind = f_ind.name
+            temp_images.append(path_ind)
             fig_ind.savefig(path_ind, dpi=150)
             plt.close(fig_ind)
 
@@ -441,6 +466,7 @@ try:
         fig_fan.tight_layout()
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f_fan:
             path_fan = f_fan.name
+            temp_images.append(path_fan)
             fig_fan.savefig(path_fan, dpi=150)
             plt.close(fig_fan)
 
@@ -458,6 +484,7 @@ try:
         fig_hist.tight_layout()
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f_hist:
             path_hist = f_hist.name
+            temp_images.append(path_hist)
             fig_hist.savefig(path_hist, dpi=150)
             plt.close(fig_hist)
 
@@ -523,12 +550,6 @@ try:
         pdf.image(path_hist, x=15, y=pdf.get_y(), w=180)
         pdf.ln(70)
 
-        # Limpeza
-        for p in [path_ind, path_fan, path_hist]:
-            try:
-                os.remove(p)
-            except Exception:
-                pass
     except Exception as sim_err:
         pdf.add_page()
         draw_section_header(pdf, '5. PROJECAO E RISCO ESTOCASTICO (MONTE CARLO)')
@@ -573,6 +594,14 @@ except Exception as gen_err:
 finally:
     # Remove tela de carregamento
     loading_placeholder.empty()
+    
+    # Remove com segurança todas as imagens temporárias criadas DEPOIS de gerar o PDF
+    for p in temp_images:
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except Exception:
+            pass
 
 # Exibe o botão de download centralizado
 if pdf_data:
